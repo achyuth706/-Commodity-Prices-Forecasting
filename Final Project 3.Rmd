@@ -1,0 +1,199 @@
+---
+title: "Data Stats Final Project"
+author: "Achyuth"
+date: "2024-12-16"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+# Set CRAN mirror
+options(repos = c(CRAN = "https://cran.rstudio.com"))
+
+install.packages("rmarkdown")   # For R Markdown functionality
+install.packages("knitr")      # For rendering and knitting
+install.packages("tinytex")    # For rendering PDFs (optional)
+
+required_packages <- c("readr", "ggplot2", "corrplot", "tidyverse", "caret", "randomForest", "Metrics", "janitor")
+install.packages(setdiff(required_packages, rownames(installed.packages())))
+
+# Load libraries
+lapply(required_packages, library, character.only = TRUE)
+
+# Load dataset
+data <- read_csv("commodity_prices_with_sp500.csv")
+
+cat("Dataset dimensions: ", paste(dim(data), collapse = " x "), "\n")
+
+# Check for missing values
+missing_values <- colSums(is.na(data))
+print(missing_values)
+
+
+# Time series plot for SP500_Price over the years
+ggplot(data, aes(x = Year, y = SP500_Price)) +
+  geom_line(color = "blue") +
+  theme_minimal() +
+  labs(title = "S&P 500 Price Over Time", x = "Year", y = "S&P 500 Price")
+
+#Add lags of variables
+numeric_data <- data %>%
+  select_if(is.numeric)
+# Load dplyr
+library(dplyr)
+
+# Example dataset
+set.seed(123)
+time_series_data <- data.frame(
+  variable1 = rnorm(10),
+  variable2 = runif(10)
+)
+
+# Compute the correlation matrix
+cor_matrix <- cor(numeric_data, use = "pairwise.complete.obs")
+
+# Print the correlation matrix
+print(cor_matrix)
+
+# Visualize the correlation matrix using a heatmap
+corrplot(cor_matrix, method = "color", type = "upper", tl.cex = 0.7, tl.col = "black",
+         title = "Correlation Matrix of Numerical Variables", mar = c(0, 0, 1, 0))
+
+
+
+#Handle Multicollinearity
+# Install the caret package if not already installed
+install.packages("caret")
+
+# Load the caret package
+library(caret)
+
+# Find highly correlated variables (correlation > 0.9)
+high_corr <- findCorrelation(cor_matrix, cutoff = 0.9, verbose = TRUE)
+
+print(high_corr)
+
+# Remove highly correlated variables
+data <- numeric_data[, -high_corr]
+if ("Year" %in% colnames(numeric_data)) {
+  data$Year <- numeric_data$Year  # Add year back if removed
+}
+
+#Add Lags of variables
+variables_to_lag <- setdiff(colnames(data), "Year")
+
+# Add 1-year lag dynamically for all selected variables
+data <- data %>%
+  mutate(across(all_of(variables_to_lag), 
+                ~ lag(.x, 1), 
+                .names = "{col}_lag1"))
+if ("Year" %in% colnames(numeric_data)) {
+  data$Year <- numeric_data$Year  # Add year back if removed
+}
+
+# Handle missing values
+# Replace missing values in numeric columns with the mean of the column
+data <- data %>%
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)))
+
+#Remove Insignificant variables
+# Calculate correlations with S&P Index
+correlations <- cor(data, use = "complete.obs")
+cor_with_target <- correlations[, "SP500_Price"]
+
+# Set a correlation threshold (e.g., |correlation| < 0.3)
+low_corr_vars <- names(cor_with_target[abs(cor_with_target) < 0.3])
+
+# Remove low-correlation variables
+filtered_data <- data[, !(colnames(data) %in% low_corr_vars)]
+
+# Print removed variables
+cat("Removed variables with low correlation:\n")
+print(low_corr_vars)
+
+# Load necessary libraries
+library(caret)         # For data splitting and model evaluation
+library(randomForest)  # For Random Forest
+library(Metrics)       # For Mean Squared Error and other metrics
+
+#Splitting of Data
+
+#Standardise data
+data <- scale(data)
+data <- as.data.frame(data)
+
+# Create training and testing sets (80% train, 20% test)
+train_index <- createDataPartition(data$`SP500_Price`, p = 0.8, list = FALSE)
+train_data <- data[train_index, ]
+test_data <- data[-train_index, ]
+
+#Linear Regression
+# Fit a Linear Regression model
+linear_model <- lm(`SP500_Price` ~ ., data = train_data)
+linear_predictions <- predict(linear_model, newdata = test_data)
+
+# Evaluate the model
+linear_mse <- mse(test_data$`SP500_Price`, linear_predictions)
+linear_r2 <- 1 - sum((test_data$`SP500_Price` - linear_predictions)^2) /
+  sum((test_data$`SP500_Price` - mean(test_data$`SP500_Price`))^2)
+
+cat("Linear Regression:\n")
+cat("MSE:", linear_mse, "\n")
+cat("R-squared:", linear_r2, "\n")
+
+#Random Forest
+# Fit a Random Forest model
+set.seed(123)  # For reproducibility
+install.packages('janitor')
+library(janitor)
+
+# Clean column names
+train_data <- clean_names(train_data)
+test_data <- clean_names(test_data)
+
+# Re-run Random Forest
+rf_model <- randomForest(sp500_price ~ ., data = train_data, ntree = 100)
+
+
+# Predict on the testing set
+rf_predictions <- predict(rf_model, newdata = test_data)
+
+# Evaluate the model
+rf_mse <- mse(test_data$`sp500_price`, rf_predictions)
+rf_r2 <- 1 - sum((test_data$`sp500_price` - rf_predictions)^2) /
+  sum((test_data$`sp500_price` - mean(test_data$`sp500_price`))^2)
+
+cat("Random Forest:\n")
+cat("MSE:", rf_mse, "\n")
+cat("R-squared:", rf_r2, "\n")
+
+#Compare both
+# Compare statistics in a single table
+comparison <- data.frame(
+  Model = c("Linear Regression", "Random Forest"),
+  MSE = c(linear_mse, rf_mse),
+  R_squared = c(linear_r2, rf_r2)
+)
+
+print(comparison)  
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
